@@ -7,7 +7,7 @@ Your modern chat application has been created with all the requested features an
 ## 📋 What's Included
 
 ### 📁 Files Created:
-1. **enhanced_main.py** - Main application with enhanced UI and features
+1. **enhanced_main.py** - Main application with enhanced UI, group chat, and update checking
 2. **main.py** - Basic version of the application
 3. **setup.py** - Script to build executable file
 4. **requirements.txt** - Python dependencies
@@ -29,6 +29,12 @@ Your modern chat application has been created with all the requested features an
 - ✅ **Gradient** - Beautiful gradient backgrounds throughout
 - ✅ **Modern UI** - Clean, modern interface with dark theme
 - ✅ **Animations** - Smooth hover effects and button animations
+
+### 🆕 New Features Added:
+- 🔄 **Check for Updates** - Update checking button with version comparison
+- 👥 **Group Chat System** - Create and participate in group conversations
+- 📑 **Tabbed Interface** - Switch between Users and Groups modes
+- 🏗️ **Group Management** - Create groups with names and descriptions
 
 ### 🚀 Bonus Features Added:
 - 🔍 **User Search** - Quick search functionality

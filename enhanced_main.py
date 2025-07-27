@@ -9,11 +9,17 @@ import os
 import shutil
 from PIL import Image, ImageTk
 import json
+import urllib.request
+import urllib.error
+import webbrowser
 
 class ChatApplication:
+    VERSION = "1.2.0"
+    UPDATE_URL = "https://api.github.com/repos/cacasians/chat-app/releases/latest"  # Example URL
+    
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("Cacasians Chat Application")
+        self.root.title(f"Cacasians Chat Application v{self.VERSION}")
         self.root.geometry("1200x800")
         self.root.configure(bg='#1a1a2e')
         
@@ -23,6 +29,10 @@ class ChatApplication:
         # Current user
         self.current_user = None
         self.current_chat_partner = None
+        self.current_group = None
+        
+        # Chat mode: 'user' or 'group'
+        self.chat_mode = 'user'
         
         # Chat refresh thread
         self.chat_refresh_thread = None
@@ -54,12 +64,39 @@ class ChatApplication:
             )
         ''')
         
-        # Create messages table
+        # Create groups table
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS groups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_by INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (created_by) REFERENCES users (id)
+            )
+        ''')
+        
+        # Create group members table
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS group_members (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                group_id INTEGER,
+                user_id INTEGER,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_admin BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY (group_id) REFERENCES groups (id),
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                UNIQUE(group_id, user_id)
+            )
+        ''')
+        
+        # Create messages table (updated for group support)
         self.cursor.execute('''
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sender_id INTEGER,
                 receiver_id INTEGER,
+                group_id INTEGER,
                 message TEXT,
                 file_path TEXT,
                 file_type TEXT,
@@ -67,11 +104,135 @@ class ChatApplication:
                 edited BOOLEAN DEFAULT FALSE,
                 deleted BOOLEAN DEFAULT FALSE,
                 FOREIGN KEY (sender_id) REFERENCES users (id),
-                FOREIGN KEY (receiver_id) REFERENCES users (id)
+                FOREIGN KEY (receiver_id) REFERENCES users (id),
+                FOREIGN KEY (group_id) REFERENCES groups (id)
             )
         ''')
         
         self.conn.commit()
+    
+    def check_for_updates(self):
+        """Check for application updates"""
+        try:
+            # Show checking dialog
+            checking_dialog = tk.Toplevel(self.root)
+            checking_dialog.title("Checking for Updates")
+            checking_dialog.geometry("300x150")
+            checking_dialog.configure(bg='#1a1a2e')
+            checking_dialog.transient(self.root)
+            checking_dialog.grab_set()
+            
+            # Center the dialog
+            checking_dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
+            
+            tk.Label(checking_dialog, text="🔄 Checking for updates...", 
+                    font=('Arial', 14), fg='white', bg='#1a1a2e').pack(pady=50)
+            
+            def check_update_thread():
+                try:
+                    # Simulate update check (replace with actual update logic)
+                    time.sleep(2)  # Simulate network delay
+                    
+                    # For demo purposes, we'll simulate different scenarios
+                    import random
+                    scenario = random.choice(['up_to_date', 'update_available', 'error'])
+                    
+                    checking_dialog.after(0, lambda: self.show_update_result(checking_dialog, scenario))
+                    
+                except Exception as e:
+                    checking_dialog.after(0, lambda: self.show_update_result(checking_dialog, 'error', str(e)))
+            
+            # Start update check in background thread
+            update_thread = threading.Thread(target=check_update_thread, daemon=True)
+            update_thread.start()
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to check for updates: {str(e)}")
+    
+    def show_update_result(self, checking_dialog, result, error_msg=None):
+        """Show update check result"""
+        checking_dialog.destroy()
+        
+        if result == 'up_to_date':
+            messagebox.showinfo("Updates", f"✅ You're running the latest version!\n\nCurrent version: {self.VERSION}")
+        elif result == 'update_available':
+            response = messagebox.askyesno("Update Available", 
+                                         f"🎉 New version available!\n\nCurrent: {self.VERSION}\nLatest: 1.3.0\n\nWould you like to download the update?")
+            if response:
+                webbrowser.open("https://github.com/cacasians/chat-app/releases")  # Example URL
+        else:
+            messagebox.showerror("Update Check Failed", 
+                               f"❌ Could not check for updates.\n\n{error_msg if error_msg else 'Please check your internet connection.'}")
+    
+    def create_group_dialog(self):
+        """Show create group dialog"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Create New Group")
+        dialog.geometry("400x300")
+        dialog.configure(bg='#1a1a2e')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 100, self.root.winfo_rooty() + 100))
+        
+        # Title
+        tk.Label(dialog, text="👥 Create New Group", font=('Arial', 18, 'bold'), 
+                fg='#e94560', bg='#1a1a2e').pack(pady=20)
+        
+        # Group name
+        tk.Label(dialog, text="Group Name:", font=('Arial', 12), 
+                fg='white', bg='#1a1a2e').pack(pady=(10, 5))
+        name_entry = tk.Entry(dialog, font=('Arial', 12), bg='#0f3460', fg='white', 
+                             insertbackground='white', width=30)
+        name_entry.pack(pady=5)
+        
+        # Group description
+        tk.Label(dialog, text="Description (optional):", font=('Arial', 12), 
+                fg='white', bg='#1a1a2e').pack(pady=(15, 5))
+        desc_text = tk.Text(dialog, font=('Arial', 10), bg='#0f3460', fg='white', 
+                           insertbackground='white', width=35, height=4)
+        desc_text.pack(pady=5)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg='#1a1a2e')
+        button_frame.pack(pady=20)
+        
+        def create_group():
+            name = name_entry.get().strip()
+            description = desc_text.get(1.0, tk.END).strip()
+            
+            if not name:
+                messagebox.showerror("Error", "Group name is required!")
+                return
+            
+            try:
+                # Create group
+                self.cursor.execute("INSERT INTO groups (name, description, created_by) VALUES (?, ?, ?)",
+                                   (name, description, self.current_user['id']))
+                group_id = self.cursor.lastrowid
+                
+                # Add creator as admin
+                self.cursor.execute("INSERT INTO group_members (group_id, user_id, is_admin) VALUES (?, ?, TRUE)",
+                                   (group_id, self.current_user['id']))
+                self.conn.commit()
+                
+                dialog.destroy()
+                messagebox.showinfo("Success", f"Group '{name}' created successfully! 🎉")
+                self.load_groups()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to create group: {str(e)}")
+        
+        create_btn = tk.Button(button_frame, text="🎉 Create Group", font=('Arial', 12, 'bold'), 
+                              bg='#e94560', fg='white', command=create_group)
+        create_btn.pack(side='left', padx=10)
+        self.animate_button(create_btn, '#ff6b7a', '#e94560')
+        
+        cancel_btn = tk.Button(button_frame, text="❌ Cancel", font=('Arial', 12, 'bold'), 
+                               bg='#0f3460', fg='white', command=dialog.destroy)
+        cancel_btn.pack(side='right', padx=10)
+        self.animate_button(cancel_btn)
     
     def clear_frame(self):
         """Clear all widgets from main frame"""
@@ -328,28 +489,49 @@ class ChatApplication:
                                font=('Arial', 12), fg='#4CAF50', bg='#16213e')
         status_label.pack(side='left', padx=(0, 20), pady=20)
         
+        # Right side buttons frame
+        right_buttons = tk.Frame(top_bar, bg='#16213e')
+        right_buttons.pack(side='right', padx=20, pady=20)
+        
+        # Check for Updates button
+        update_btn = tk.Button(right_buttons, text="🔄 Check Updates", font=('Arial', 10, 'bold'), 
+                              bg='#0f3460', fg='white', command=self.check_for_updates,
+                              relief='flat', bd=0, pady=6, padx=10)
+        update_btn.pack(side='left', padx=(0, 10))
+        self.animate_button(update_btn)
+        
         # Logout button with enhanced styling
-        logout_btn = tk.Button(top_bar, text="🚪 Logout", font=('Arial', 12, 'bold'), 
+        logout_btn = tk.Button(right_buttons, text="🚪 Logout", font=('Arial', 12, 'bold'), 
                               bg='#e94560', fg='white', command=self.logout,
                               relief='flat', bd=0, pady=8, padx=15)
-        logout_btn.pack(side='right', padx=20, pady=20)
+        logout_btn.pack(side='left')
         self.animate_button(logout_btn, '#ff6b7a', '#e94560')
         
         # Main content area
         content_frame = tk.Frame(chat_container, bg='#1a1a2e')
         content_frame.pack(fill='both', expand=True, padx=10, pady=5)
         
-        # Left panel - Users list with enhanced styling
+        # Left panel - Users and Groups list with enhanced styling
         left_panel = tk.Frame(content_frame, bg='#16213e', width=320, relief='raised', bd=2)
         left_panel.pack(side='left', fill='y', padx=(0, 5))
         left_panel.pack_propagate(False)
         
-        # Users list title with icon
-        users_title_frame = tk.Frame(left_panel, bg='#16213e')
-        users_title_frame.pack(fill='x', pady=15)
+        # Chat mode tabs
+        tabs_frame = tk.Frame(left_panel, bg='#16213e')
+        tabs_frame.pack(fill='x', pady=10)
         
-        tk.Label(users_title_frame, text="👥 Active Users", font=('Arial', 16, 'bold'), 
-                fg='white', bg='#16213e').pack()
+        self.users_tab_btn = tk.Button(tabs_frame, text="👥 Users", font=('Arial', 12, 'bold'), 
+                                      bg='#e94560', fg='white', command=lambda: self.switch_chat_mode('user'),
+                                      relief='flat', bd=0, pady=8)
+        self.users_tab_btn.pack(side='left', fill='x', expand=True, padx=(10, 5))
+        
+        self.groups_tab_btn = tk.Button(tabs_frame, text="🏢 Groups", font=('Arial', 12, 'bold'), 
+                                       bg='#0f3460', fg='white', command=lambda: self.switch_chat_mode('group'),
+                                       relief='flat', bd=0, pady=8)
+        self.groups_tab_btn.pack(side='right', fill='x', expand=True, padx=(5, 10))
+        
+        self.animate_button(self.users_tab_btn, '#ff6b7a', '#e94560')
+        self.animate_button(self.groups_tab_btn)
         
         # Search frame
         search_frame = tk.Frame(left_panel, bg='#16213e')
@@ -362,21 +544,30 @@ class ChatApplication:
                                     font=('Arial', 10), insertbackground='white',
                                     relief='flat', bd=5)
         self.search_entry.pack(side='right', fill='x', expand=True, padx=(5, 0))
-        self.search_entry.bind('<KeyRelease>', self.filter_users)
+        self.search_entry.bind('<KeyRelease>', self.filter_items)
         
-        # Users listbox with custom styling
+        # Create group button (only visible in group mode)
+        self.create_group_frame = tk.Frame(left_panel, bg='#16213e')
+        
+        create_group_btn = tk.Button(self.create_group_frame, text="➕ Create Group", 
+                                    font=('Arial', 11, 'bold'), bg='#e94560', fg='white', 
+                                    command=self.create_group_dialog, relief='flat', bd=0, pady=6)
+        create_group_btn.pack(fill='x', padx=10, pady=5)
+        self.animate_button(create_group_btn, '#ff6b7a', '#e94560')
+        
+        # List frame
         listbox_frame = tk.Frame(left_panel, bg='#16213e')
         listbox_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
-        self.users_listbox = tk.Listbox(listbox_frame, bg='#0f3460', fg='white', 
+        self.items_listbox = tk.Listbox(listbox_frame, bg='#0f3460', fg='white', 
                                        font=('Arial', 12), selectbackground='#e94560',
                                        relief='flat', bd=0, highlightthickness=0)
-        users_scrollbar = tk.Scrollbar(listbox_frame, command=self.users_listbox.yview)
-        self.users_listbox.configure(yscrollcommand=users_scrollbar.set)
+        items_scrollbar = tk.Scrollbar(listbox_frame, command=self.items_listbox.yview)
+        self.items_listbox.configure(yscrollcommand=items_scrollbar.set)
         
-        self.users_listbox.pack(side='left', fill='both', expand=True)
-        users_scrollbar.pack(side='right', fill='y')
-        self.users_listbox.bind('<<ListboxSelect>>', self.select_user)
+        self.items_listbox.pack(side='left', fill='both', expand=True)
+        items_scrollbar.pack(side='right', fill='y')
+        self.items_listbox.bind('<<ListboxSelect>>', self.select_item)
         
         # Right panel - Chat area
         right_panel = tk.Frame(content_frame, bg='#16213e', relief='raised', bd=2)
@@ -431,91 +622,278 @@ class ChatApplication:
         self.animate_button(send_btn, '#ff6b7a', '#e94560')
         
         # Load users and start chat refresh
-        self.load_users()
+        self.refresh_users()
         self.start_chat_refresh()
     
-    def filter_users(self, event=None):
-        """Filter users based on search input"""
-        search_term = self.search_entry.get().lower()
-        self.users_listbox.delete(0, tk.END)
+    def switch_chat_mode(self, mode):
+        """Switch between user and group chat modes"""
+        self.chat_mode = mode
         
-        self.cursor.execute("SELECT id, username FROM users WHERE id != ? AND LOWER(username) LIKE ?", 
-                           (self.current_user['id'], f'%{search_term}%'))
-        users = self.cursor.fetchall()
+        # Update tab button styles
+        if mode == 'user':
+            self.users_tab_btn.config(bg='#e94560')
+            self.groups_tab_btn.config(bg='#0f3460')
+            self.create_group_frame.pack_forget()
+        else:
+            self.users_tab_btn.config(bg='#0f3460')
+            self.groups_tab_btn.config(bg='#e94560')
+            self.create_group_frame.pack(fill='x', pady=5)
         
-        for user in users:
-            self.users_listbox.insert(tk.END, f"👤 {user[1]}")
+        # Clear current selection and refresh list
+        self.current_user = None
+        self.current_group = None
+        self.current_chat_partner = None
+        self.refresh_items()
+        self.clear_chat()
     
-    def load_users(self):
-        """Load all users except current user"""
-        self.users_listbox.delete(0, tk.END)
-        self.cursor.execute("SELECT id, username FROM users WHERE id != ?", (self.current_user['id'],))
-        users = self.cursor.fetchall()
+    def clear_chat(self):
+        """Clear the chat display"""
+        self.chat_label.config(text="💬 Select a user or group to start chatting")
+        self.chat_text.config(state='normal')
+        self.chat_text.delete(1.0, tk.END)
+        self.chat_text.config(state='disabled')
+        self.message_widgets.clear()
+    
+    def refresh_items(self):
+        """Refresh the items list based on current chat mode"""
+        if self.chat_mode == 'user':
+            self.refresh_users()
+        else:
+            self.refresh_groups()
+    
+    def refresh_groups(self):
+        """Refresh the groups list"""
+        self.items_listbox.delete(0, tk.END)
+        
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT g.id, g.name, g.description, COUNT(gm.user_id) as member_count
+            FROM groups g
+            LEFT JOIN group_members gm ON g.id = gm.group_id
+            INNER JOIN group_members ugm ON g.id = ugm.group_id
+            WHERE ugm.user_id = ?
+            GROUP BY g.id, g.name, g.description
+            ORDER BY g.name
+        ''', (self.current_user_id,))
+        
+        groups = cursor.fetchall()
+        for group in groups:
+            group_id, name, description, member_count = group
+            display_text = f"🏢 {name} ({member_count} members)"
+            if description:
+                display_text += f" - {description[:30]}..."
+            self.items_listbox.insert(tk.END, display_text)
+            
+    def refresh_users(self):
+        """Refresh the users list"""
+        self.items_listbox.delete(0, tk.END)
+        
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, username FROM users WHERE id != ?', (self.current_user_id,))
+        users = cursor.fetchall()
         
         for user in users:
-            self.users_listbox.insert(tk.END, f"👤 {user[1]}")
-            
-    def select_user(self, event):
-        """Select user to chat with"""
-        selection = self.users_listbox.curselection()
+            user_id, username = user
+            # Add online status indicator (simplified - always show as online for demo)
+            self.items_listbox.insert(tk.END, f"🟢 {username}")
+    
+    def select_item(self, event):
+        """Handle item selection based on current chat mode"""
+        if self.chat_mode == 'user':
+            self.select_user(event)
+        else:
+            self.select_group(event)
+    
+    def select_group(self, event):
+        """Handle group selection"""
+        selection = self.items_listbox.curselection()
         if selection:
-            username_with_icon = self.users_listbox.get(selection[0])
-            username = username_with_icon.replace("👤 ", "")
-            self.cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
-            user_id = self.cursor.fetchone()[0]
-            self.current_chat_partner = {'id': user_id, 'username': username}
-            self.chat_header.config(text=f"💬 Chatting with {username}")
-            self.load_chat_history()
+            selected_text = self.items_listbox.get(selection[0])
+            group_name = selected_text.split(' ', 1)[1].split(' (')[0]  # Extract group name
+            
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT id FROM groups WHERE name = ?', (group_name,))
+            result = cursor.fetchone()
+            
+            if result:
+                self.current_group = result[0]
+                self.current_user = None  # Clear user selection
+                self.current_chat_partner = None
+                self.chat_label.config(text=f"💬 Group: {group_name}")
+                self.refresh_chat()
+    
+    def select_user(self, event):
+        """Handle user selection for chat"""
+        selection = self.items_listbox.curselection()
+        if selection:
+            selected_text = self.items_listbox.get(selection[0])
+            username = selected_text.split(' ', 1)[1]  # Remove the status indicator
+            
+            cursor = self.conn.cursor()
+            cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
+            result = cursor.fetchone()
+            
+            if result:
+                self.current_user = result[0]
+                self.current_group = None
+                self.current_chat_partner = {'id': result[0], 'username': username}
+                self.chat_label.config(text=f"💬 Chat with {username}")
+                self.refresh_chat()
+    
+    def filter_items(self, event):
+        """Filter items based on current chat mode"""
+        if self.chat_mode == 'user':
+            self.filter_users(event)
+        else:
+            self.filter_groups(event)
+    
+    def filter_groups(self, event):
+        """Filter groups based on search text"""
+        search_text = self.search_entry.get().lower()
+        self.items_listbox.delete(0, tk.END)
+        
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            SELECT g.id, g.name, g.description, COUNT(gm.user_id) as member_count
+            FROM groups g
+            LEFT JOIN group_members gm ON g.id = gm.group_id
+            INNER JOIN group_members ugm ON g.id = ugm.group_id
+            WHERE ugm.user_id = ? AND LOWER(g.name) LIKE ?
+            GROUP BY g.id, g.name, g.description
+            ORDER BY g.name
+        ''', (self.current_user_id, f'%{search_text}%'))
+        
+        groups = cursor.fetchall()
+        for group in groups:
+            group_id, name, description, member_count = group
+            display_text = f"🏢 {name} ({member_count} members)"
+            if description:
+                display_text += f" - {description[:30]}..."
+            self.items_listbox.insert(tk.END, display_text)
+    
+    def filter_users(self, event):
+        """Filter users based on search text"""
+        search_text = self.search_entry.get().lower()
+        self.items_listbox.delete(0, tk.END)
+        
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT id, username FROM users WHERE id != ? AND LOWER(username) LIKE ?', 
+                      (self.current_user_id, f'%{search_text}%'))
+        users = cursor.fetchall()
+        
+        for user in users:
+            user_id, username = user
+            self.items_listbox.insert(tk.END, f"🟢 {username}")
+    
+    def refresh_chat(self):
+        """Refresh the chat display"""
+        self.load_chat_history()
     
     def load_chat_history(self):
-        """Load chat history with selected user"""
-        if not self.current_chat_partner:
+        """Load chat history with selected user or group"""
+        if not self.current_chat_partner and not self.current_group:
             return
         
         self.chat_text.config(state='normal')
         self.chat_text.delete(1.0, tk.END)
         self.message_widgets.clear()
         
-        self.cursor.execute("""
-            SELECT sender_id, message, file_path, file_type, timestamp, edited, deleted, id
-            FROM messages 
-            WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
-            AND deleted = FALSE
-            ORDER BY timestamp
-        """, (self.current_user['id'], self.current_chat_partner['id'],
-              self.current_chat_partner['id'], self.current_user['id']))
+        cursor = self.conn.cursor()
         
-        messages = self.cursor.fetchall()
+        if self.current_chat_partner:
+            # Load user chat history
+            cursor.execute("""
+                SELECT sender_id, message, file_path, file_type, timestamp, edited, deleted, id
+                FROM messages 
+                WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
+                AND deleted = FALSE AND group_id IS NULL
+                ORDER BY timestamp
+            """, (self.current_user['id'], self.current_chat_partner['id'],
+                  self.current_chat_partner['id'], self.current_user['id']))
+        else:
+            # Load group chat history
+            cursor.execute("""
+                SELECT sender_id, message, file_path, file_type, timestamp, edited, deleted, id
+                FROM messages 
+                WHERE group_id = ? AND deleted = FALSE
+                ORDER BY timestamp
+            """, (self.current_group,))
+        
+        messages = cursor.fetchall()
         
         for msg in messages:
             sender_id, message, file_path, file_type, timestamp, edited, deleted, msg_id = msg
-            sender = "You" if sender_id == self.current_user['id'] else self.current_chat_partner['username']
+            
+            # Get sender name
+            if sender_id == self.current_user['id']:
+                sender = "You"
+            elif self.current_chat_partner:
+                sender = self.current_chat_partner['username']
+            else:
+                # For group chats, get the sender's username
+                cursor.execute("SELECT username FROM users WHERE id = ?", (sender_id,))
+                sender_result = cursor.fetchone()
+                sender = sender_result[0] if sender_result else "Unknown"
             
             # Format timestamp
             time_str = datetime.datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S').strftime('%H:%M')
             
-            # Create message display
-            if file_path:
-                if file_type == 'image':
-                    display_text = f"[{time_str}] {sender}: 🖼️ {os.path.basename(file_path)}"
-                elif file_type == 'video':
-                    display_text = f"[{time_str}] {sender}: 🎥 {os.path.basename(file_path)}"
-                else:
-                    display_text = f"[{time_str}] {sender}: 📄 {os.path.basename(file_path)}"
-            else:
-                display_text = f"[{time_str}] {sender}: {message}"
+            # Create message frame
+            msg_frame = tk.Frame(self.chat_text, bg='#1a1a2e')
             
+            # Determine message alignment and color
+            is_own_message = sender_id == self.current_user['id']
+            bg_color = '#e94560' if is_own_message else '#0f3460'
+            align = 'right' if is_own_message else 'left'
+            
+            # Message content frame
+            content_frame = tk.Frame(msg_frame, bg=bg_color, relief='raised', bd=1)
+            content_frame.pack(side=align, padx=10, pady=2, fill='x' if not is_own_message else 'none')
+            
+            # Sender and time info
+            info_text = f"{sender} • {time_str}"
             if edited:
-                display_text += " ✏️"
+                info_text += " (edited)"
             
-            # Insert message
-            start_pos = self.chat_text.index(tk.END)
-            self.chat_text.insert(tk.END, display_text + "\n")
-            end_pos = self.chat_text.index(tk.END)
+            info_label = tk.Label(content_frame, text=info_text, font=('Arial', 8), 
+                                 fg='#cccccc', bg=bg_color, anchor='w')
+            info_label.pack(fill='x', padx=5, pady=(2, 0))
             
-            # Add right-click menu for own messages
-            if sender_id == self.current_user['id']:
-                self.add_message_context_menu(start_pos, end_pos, msg_id, message, file_path)
+            # Message text or file info
+            if file_path:
+                file_name = os.path.basename(file_path)
+                file_icon = self.get_file_icon(file_type)
+                display_text = f"{file_icon} {file_name}"
+                if message:
+                    display_text = f"{message}\n{display_text}"
+            else:
+                display_text = message
+            
+            msg_label = tk.Label(content_frame, text=display_text, font=('Arial', 10), 
+                               fg='white', bg=bg_color, wraplength=300, justify='left', anchor='w')
+            msg_label.pack(fill='x', padx=5, pady=(0, 5))
+            
+            # Store message widget for context menu
+            self.message_widgets[msg_id] = {
+                'frame': content_frame,
+                'label': msg_label,
+                'sender_id': sender_id,
+                'message': message,
+                'file_path': file_path
+            }
+            
+            # Add context menu for own messages
+            if is_own_message:
+                self.add_message_context_menu(msg_label, msg_id)
+            
+            # Add click handler for file messages
+            if file_path:
+                msg_label.bind("<Button-1>", lambda e, path=file_path: self.open_file(path))
+                msg_label.config(cursor="hand2")
+            
+            # Insert message frame into chat
+            self.chat_text.window_create(tk.END, window=msg_frame)
+            self.chat_text.insert(tk.END, '\n')
         
         self.chat_text.config(state='disabled')
         self.chat_text.see(tk.END)
@@ -567,9 +945,9 @@ class ChatApplication:
                 messagebox.showerror("Error", f"Failed to delete message: {str(e)}")
     
     def send_message(self):
-        """Send message to selected user"""
-        if not self.current_chat_partner:
-            messagebox.showwarning("Warning", "Please select a user to chat with!")
+        """Send message to selected user or group"""
+        if not self.current_chat_partner and not self.current_group:
+            messagebox.showwarning("Warning", "Please select a user or group to chat with!")
             return
         
         message = self.message_entry.get().strip()
@@ -577,12 +955,21 @@ class ChatApplication:
             return
         
         try:
-            self.cursor.execute("""
-                INSERT INTO messages (sender_id, receiver_id, message) 
-                VALUES (?, ?, ?)
-            """, (self.current_user['id'], self.current_chat_partner['id'], message))
-            self.conn.commit()
+            cursor = self.conn.cursor()
+            if self.current_chat_partner:
+                # Send to user
+                cursor.execute("""
+                    INSERT INTO messages (sender_id, receiver_id, message) 
+                    VALUES (?, ?, ?)
+                """, (self.current_user['id'], self.current_chat_partner['id'], message))
+            else:
+                # Send to group
+                cursor.execute("""
+                    INSERT INTO messages (sender_id, group_id, message) 
+                    VALUES (?, ?, ?)
+                """, (self.current_user['id'], self.current_group, message))
             
+            self.conn.commit()
             self.message_entry.delete(0, tk.END)
             self.load_chat_history()
         except Exception as e:
@@ -590,8 +977,8 @@ class ChatApplication:
     
     def attach_file(self):
         """Attach file to message"""
-        if not self.current_chat_partner:
-            messagebox.showwarning("Warning", "Please select a user to chat with!")
+        if not self.current_chat_partner and not self.current_group:
+            messagebox.showwarning("Warning", "Please select a user or group to chat with!")
             return
         
         file_path = filedialog.askopenfilename(
@@ -605,40 +992,168 @@ class ChatApplication:
         )
         
         if file_path:
-            # Create attachments directory if it doesn't exist
-            attachments_dir = "attachments"
-            if not os.path.exists(attachments_dir):
-                os.makedirs(attachments_dir)
+            # Get file info
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path)
             
-            # Copy file to attachments directory
-            filename = os.path.basename(file_path)
-            new_path = os.path.join(attachments_dir, f"{int(time.time())}_{filename}")
-            shutil.copy2(file_path, new_path)
+            # Check file size (limit to 50MB)
+            if file_size > 50 * 1024 * 1024:
+                messagebox.showerror("Error", "File size too large! Maximum size is 50MB.")
+                return
             
             # Determine file type
-            file_ext = os.path.splitext(filename)[1].lower()
+            file_ext = os.path.splitext(file_name)[1].lower()
             if file_ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp']:
                 file_type = 'image'
-                message_text = f"Sent an image: {filename}"
             elif file_ext in ['.mp4', '.avi', '.mov', '.wmv']:
                 file_type = 'video'
-                message_text = f"Sent a video: {filename}"
             else:
                 file_type = 'document'
-                message_text = f"Sent a file: {filename}"
+            
+            # Create attachments directory if it doesn't exist
+            attachments_dir = os.path.join(os.path.dirname(__file__), 'attachments')
+            os.makedirs(attachments_dir, exist_ok=True)
+            
+            # Copy file to attachments directory
+            new_path = os.path.join(attachments_dir, f"{int(time.time())}_{file_name}")
+            shutil.copy2(file_path, new_path)
+            
+            # Get optional message text
+            message_text = self.message_entry.get().strip()
             
             try:
-                self.cursor.execute("""
-                    INSERT INTO messages (sender_id, receiver_id, message, file_path, file_type) 
-                    VALUES (?, ?, ?, ?, ?)
-                """, (self.current_user['id'], self.current_chat_partner['id'], 
-                      message_text, new_path, file_type))
+                cursor = self.conn.cursor()
+                if self.current_chat_partner:
+                    # Send file to user
+                    cursor.execute("""
+                        INSERT INTO messages (sender_id, receiver_id, message, file_path, file_type) 
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (self.current_user['id'], self.current_chat_partner['id'], 
+                          message_text, new_path, file_type))
+                else:
+                    # Send file to group
+                    cursor.execute("""
+                        INSERT INTO messages (sender_id, group_id, message, file_path, file_type) 
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (self.current_user['id'], self.current_group, 
+                          message_text, new_path, file_type))
+                
                 self.conn.commit()
                 
+                self.message_entry.delete(0, tk.END)
                 self.load_chat_history()
-                messagebox.showinfo("Success", f"File attached successfully! 📎")
+                messagebox.showinfo("Success", f"File '{file_name}' attached successfully!")
+                
             except Exception as e:
+                # Clean up copied file if database insert fails
+                if os.path.exists(new_path):
+                    os.remove(new_path)
                 messagebox.showerror("Error", f"Failed to attach file: {str(e)}")
+    
+    def get_file_icon(self, file_type):
+        """Get appropriate icon for file type"""
+        if file_type == 'image':
+            return '🖼️'
+        elif file_type == 'video':
+            return '🎥'
+        else:
+            return '📄'
+    
+    def open_file(self, file_path):
+        """Open file with default system application"""
+        try:
+            if os.path.exists(file_path):
+                os.startfile(file_path)  # Windows
+            else:
+                messagebox.showerror("Error", "File not found!")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to open file: {str(e)}")
+    
+    def add_message_context_menu(self, widget, msg_id):
+        """Add context menu to message widget"""
+        context_menu = tk.Menu(self.root, tearoff=0)
+        context_menu.add_command(label="✏️ Edit", command=lambda: self.edit_message(msg_id))
+        context_menu.add_command(label="🗑️ Delete", command=lambda: self.delete_message(msg_id))
+        
+        def show_context_menu(event):
+            try:
+                context_menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                context_menu.grab_release()
+        
+        widget.bind("<Button-3>", show_context_menu)  # Right click
+    
+    def edit_message(self, msg_id):
+        """Edit a message"""
+        if msg_id not in self.message_widgets:
+            return
+        
+        msg_data = self.message_widgets[msg_id]
+        if msg_data['file_path']:
+            messagebox.showwarning("Warning", "Cannot edit messages with file attachments!")
+            return
+        
+        # Create edit dialog
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Edit Message")
+        dialog.geometry("400x200")
+        dialog.configure(bg='#1a1a2e')
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Center the dialog
+        dialog.geometry("+%d+%d" % (self.root.winfo_rootx() + 50, self.root.winfo_rooty() + 50))
+        
+        tk.Label(dialog, text="Edit your message:", font=('Arial', 12, 'bold'), 
+                fg='white', bg='#1a1a2e').pack(pady=10)
+        
+        # Text entry
+        text_var = tk.StringVar(value=msg_data['message'])
+        entry = tk.Entry(dialog, textvariable=text_var, font=('Arial', 11), 
+                        bg='#0f3460', fg='white', insertbackground='white', width=40)
+        entry.pack(pady=10, padx=20, fill='x')
+        entry.focus()
+        
+        # Buttons
+        button_frame = tk.Frame(dialog, bg='#1a1a2e')
+        button_frame.pack(pady=20)
+        
+        def save_edit():
+            new_message = text_var.get().strip()
+            if new_message and new_message != msg_data['message']:
+                try:
+                    cursor = self.conn.cursor()
+                    cursor.execute("UPDATE messages SET message = ?, edited = TRUE WHERE id = ?", 
+                                 (new_message, msg_id))
+                    self.conn.commit()
+                    dialog.destroy()
+                    self.load_chat_history()
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to edit message: {str(e)}")
+            else:
+                dialog.destroy()
+        
+        save_btn = tk.Button(button_frame, text="💾 Save", font=('Arial', 11, 'bold'), 
+                           bg='#e94560', fg='white', command=save_edit)
+        save_btn.pack(side='left', padx=10)
+        
+        cancel_btn = tk.Button(button_frame, text="❌ Cancel", font=('Arial', 11, 'bold'), 
+                             bg='#0f3460', fg='white', command=dialog.destroy)
+        cancel_btn.pack(side='right', padx=10)
+        
+        # Bind Enter key to save
+        entry.bind('<Return>', lambda e: save_edit())
+    
+    def delete_message(self, msg_id):
+        """Delete a message"""
+        if messagebox.askyesno("Confirm Delete", "Are you sure you want to delete this message?"):
+            try:
+                cursor = self.conn.cursor()
+                cursor.execute("UPDATE messages SET deleted = TRUE WHERE id = ?", (msg_id,))
+                self.conn.commit()
+                self.load_chat_history()
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to delete message: {str(e)}")
     
     def start_chat_refresh(self):
         """Start background thread to refresh chat"""
@@ -650,7 +1165,7 @@ class ChatApplication:
         """Background loop to refresh chat every 2 seconds"""
         while self.refresh_chat:
             time.sleep(2)
-            if self.current_chat_partner and self.refresh_chat:
+            if (self.current_chat_partner or self.current_group) and self.refresh_chat:
                 self.root.after(0, self.load_chat_history)
     
     def logout(self):
