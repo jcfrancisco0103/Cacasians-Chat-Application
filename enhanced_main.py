@@ -15,7 +15,7 @@ import webbrowser
 
 class ChatApplication:
     VERSION = "1.2.0"
-    UPDATE_URL = "https://api.github.com/repos/cacasians/chat-app/releases/latest"  # Example URL
+    UPDATE_URL = "https://github.com/jcfrancisco0103/Cacasians-Chat-Application/releases"  # Example URL
     
     def __init__(self):
         self.root = tk.Tk()
